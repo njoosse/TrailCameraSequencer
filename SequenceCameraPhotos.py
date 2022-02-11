@@ -2,7 +2,7 @@
 """
 Created on Tue Jan 18 12:06:12 2022
 
-@author: njoos
+@author: njoosse
 """
 
 from datetime import datetime
@@ -15,8 +15,7 @@ from PyQt5.QtWidgets import (QApplication, QDialog, QGridLayout, QLabel, QLineEd
         QFileDialog, QMessageBox, QApplication, QLineEdit, QCheckBox)
 import shutil
 
-from numpy import full
-
+# returns True if the image can be loaded as a PIL Image
 def isImage(filename):
     # ensure that this is the basename
     filename = os.path.basename(filename)
@@ -28,6 +27,7 @@ def isImage(filename):
         return True
     return False
 
+# class that will run the move task in a 2nd thread to the user interface
 class Mover(QObject):
     finished = pyqtSignal()
     progress = pyqtSignal(int)
@@ -45,8 +45,10 @@ class Mover(QObject):
         self.startTime = datetime(1970, 1, 1, 0, 0, 0)
         self.oldImageDate = ''
 
+    # calculate the output filename for the image
     def createOutputFileName(self, img, cameraName, extension):
         exifData = img.getexif()
+        # iterate through the exif data to find the timestamp
         for tag_id in exifData:
             tag = TAGS.get(tag_id, tag_id)
             data = exifData.get(tag_id)
@@ -81,11 +83,10 @@ class Mover(QObject):
                     fullOutName = os.path.join(self.outFolder, cameraName, outputName)
         return fullOutName
 
+    # function that opens and renames the images
     def moveFiles(self):
         os.chdir(self.inFolder)
         fileNumber = 0
-        makeLegendFile = False
-        self.progress.emit(round(fileNumber / self.fileCount, 1))
         fullFilename = ''
         for content in os.listdir(self.inFolder):
             if self.folderFormat == 'Single':
@@ -94,22 +95,29 @@ class Mover(QObject):
                     img = Image.open(fullFilename)
                     outputName = self.createOutputFileName(img, os.path.basename(self.outFolder), os.path.splitext(content)[1])
                     self.sequenceNumber += 1
+                    if not os.path.exists(os.path.join(os.path.dirname(outputName))):
+                        # was mkdir, user could type in a folder whose parent doesn't exist yet
+                        os.makedirs(os.path.join(self.outFolder, content))
                     shutil.copy(fullFilename, outputName)
                     fileNumber += 1
+                    # send the progress back to the front-end thread
                     self.progress.emit(fileNumber / self.fileCount * 100)
                 else:
                     continue
             else:
                 for imageFile in os.listdir(content):
+                    # confirm that the file can be opened as an image
                     if isImage(imageFile):
                         fullFilename = os.path.join(content, imageFile)
                         img = Image.open(fullFilename)
                         outputName = self.createOutputFileName(img, content, os.path.splitext(imageFile)[1])
                         if not os.path.exists(os.path.join(self.outFolder, content)):
-                            os.mkdir(os.path.join(self.outFolder, content))
+                            # was mkdir, user could type in a folder whose parent doesn't exist yet
+                            os.makedirs(os.path.join(self.outFolder, content))
                         self.sequenceNumber += 1
                         shutil.copy(fullFilename, outputName)
                         fileNumber += 1
+                        # send the progress back to the front-end thread
                         self.progress.emit(fileNumber / self.fileCount * 100)
                     else:
                         continue
@@ -152,6 +160,7 @@ class WidgetGallery(QDialog):
             return
         self.outFolderName.setText(folderName)
     
+    # verify that the input and output folders exist when starting the task
     def validateMove(self):
         errorMsg = ''
         if self.inFolderName.text() == '':
@@ -170,6 +179,7 @@ class WidgetGallery(QDialog):
             return False
         return True
 
+    # disable the inputs while the task is running
     def disableInputs(self):
         self.transferButton.setText('Processing...')
         for control in self.controlLst:
@@ -177,6 +187,7 @@ class WidgetGallery(QDialog):
         self.transferButton.setEnabled(False)
         self.progressBar.setVisible(True)
 
+    # re-enables the inputs after the task has completed
     def enableInputs(self):
         self.transferButton.setText('Transfer ->')
         for control in self.controlLst:
@@ -184,17 +195,20 @@ class WidgetGallery(QDialog):
         self.transferButton.setEnabled(True)
         self.progressBar.setVisible(False)
 
-    def getNumberOfJPGs(self):
+    # count the number of images that will be moving to scale the progress bar
+    def getNumberOfImages(self):
         fileCount = 0
         for dirpath, dirnames, filenames in os.walk(self.inFolderName.text()):
             for filename in filenames:
-                if filename.lower().endswith('.jpg') or filename.lower().endswith('.jpeg'):
+                if os.path.splitext(filename)[1].lower()[1:] in ['jpg', 'jpeg', 'png', 'tif']:
                     fileCount += 1
         return fileCount
 
+    # incrases the value of the progress bar from the mover task
     def incrementProgress(self, val):
         self.progressBar.setValue(val)
 
+    # definition for dialog that appears when the transfer has completed
     def showCompletedDialog(self):
         completed_dialog = QMessageBox()
         completed_dialog.setIcon(QMessageBox.Information)
@@ -205,19 +219,24 @@ class WidgetGallery(QDialog):
         self.enableInputs()
 
     def runTool(self):
+        # disable the user interface until the transfer is completed
         self.disableInputs()
+        # define the thread that will handle the rename and move
         self.moverThread = QThread()
-        self.mover = Mover(self.getNumberOfJPGs(), self.inFolderName.text(), self.outFolderName.text(), 
+        self.mover = Mover(self.getNumberOfImages(), self.inFolderName.text(), self.outFolderName.text(), 
                             self.useDateCheck.isChecked(), self.useTimeCheck.isChecked(), self.folderType)
         self.mover.moveToThread(self.moverThread)
+        # connect functions to statuses from the mover thread
         self.moverThread.started.connect(self.mover.moveFiles)
         self.mover.finished.connect(self.moverThread.quit)
         self.mover.progress.connect(self.incrementProgress)
         self.mover.finished.connect(self.mover.deleteLater)
         self.mover.finished.connect(self.showCompletedDialog)
         self.moverThread.finished.connect(self.moverThread.deleteLater)
+        # start the move
         self.moverThread.start()
 
+    # uncheck the not-most-recently selected radiobutton
     def setRadioButtons(self, selected):
         if selected == 'single':
             self.folderType = 'Single'
@@ -232,9 +251,11 @@ class WidgetGallery(QDialog):
             self.useDateCheck.setChecked(True)
 
     def uncheckTime(self):
+        # disables the time checkbutton if date is deselected
         if not self.useDateCheck.isChecked():
             self.useTimeCheck.setChecked(False)
 
+    # main layout function
     def createLayout(self):
         grid = QGridLayout()
         self.controlLst = []
@@ -310,13 +331,12 @@ class WidgetGallery(QDialog):
         
         self.setLayout(grid)
 
+    # I like a different style than the default one, this is how I change it
     def changeStyle(self, styleName):
         QApplication.setStyle(QStyleFactory.create(styleName))
-        self.changePalette()
-
-    def changePalette(self):
         QApplication.setPalette(QApplication.style().standardPalette())
 
+    # initialize the class
     def __init__(self, parent=None):
         super(WidgetGallery, self).__init__(parent)
         self.originalPalette = QApplication.palette()
@@ -329,7 +349,6 @@ class WidgetGallery(QDialog):
         self.createLayout()
 
 if __name__ == '__main__':
-    makeLegendFile = True
     app = QApplication([])
     window = WidgetGallery()
     window.show()
