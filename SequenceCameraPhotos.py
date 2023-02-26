@@ -83,44 +83,46 @@ class Mover(QObject):
                     fullOutName = os.path.join(self.outFolder, cameraName, outputName)
         return fullOutName
 
+    def moveSingleFolder(self, inFolder, outFolder):
+        fileNumber = 0
+        fullFilename = ''
+        filenames = os.listdir(inFolder)
+        filenames.sort()
+        for filename in filenames:
+            if isImage(filename):
+                fullFilename = os.path.join(inFolder, filename)
+                img = Image.open(fullFilename)
+                outputName = self.createOutputFileName(img, os.path.basename(outFolder), os.path.splitext(filename)[1])
+                self.sequenceNumber += 1
+                if not os.path.exists(os.path.join(os.path.dirname(outputName))):
+                    # was mkdir, user could type in a folder whose parent doesn't exist yet
+                    os.makedirs(os.path.join(outFolder, filename))
+                shutil.copy(fullFilename, outputName)
+                fileNumber += 1
+                # send the progress back to the front-end thread
+                self.progress.emit(fileNumber / self.fileCount * 100)
+                while not os.path.exists(outputName):
+                    print(f'failed to copy {fullFilename} -> {outputName}')
+                    shutil.copy(fullFilename, outputName)
+            else:
+                continue            
+
+    def moveNestedFolders(self):
+        folders = os.listdir(self.inFolder)
+        folders.sort()
+        for folder in folders:
+            outFolder = os.path.join(self.outFolder, folder)
+            if not os.path.exists(outFolder):
+                os.makedirs(outFolder)
+            self.moveSingleFolder(os.path.join(self.inFolder, folder), outFolder)
+
     # function that opens and renames the images
     def moveFiles(self):
         os.chdir(self.inFolder)
-        fileNumber = 0
-        fullFilename = ''
-        for content in os.listdir(self.inFolder):
-            if self.folderFormat == 'Single':
-                if isImage(content):
-                    fullFilename = content
-                    img = Image.open(fullFilename)
-                    outputName = self.createOutputFileName(img, os.path.basename(self.outFolder), os.path.splitext(content)[1])
-                    self.sequenceNumber += 1
-                    if not os.path.exists(os.path.join(os.path.dirname(outputName))):
-                        # was mkdir, user could type in a folder whose parent doesn't exist yet
-                        os.makedirs(os.path.join(self.outFolder, content))
-                    shutil.copy(fullFilename, outputName)
-                    fileNumber += 1
-                    # send the progress back to the front-end thread
-                    self.progress.emit(fileNumber / self.fileCount * 100)
-                else:
-                    continue
-            else:
-                for imageFile in os.listdir(content):
-                    # confirm that the file can be opened as an image
-                    if isImage(imageFile):
-                        fullFilename = os.path.join(content, imageFile)
-                        img = Image.open(fullFilename)
-                        outputName = self.createOutputFileName(img, content, os.path.splitext(imageFile)[1])
-                        if not os.path.exists(os.path.join(self.outFolder, content)):
-                            # was mkdir, user could type in a folder whose parent doesn't exist yet
-                            os.makedirs(os.path.join(self.outFolder, content))
-                        self.sequenceNumber += 1
-                        shutil.copy(fullFilename, outputName)
-                        fileNumber += 1
-                        # send the progress back to the front-end thread
-                        self.progress.emit(fileNumber / self.fileCount * 100)
-                    else:
-                        continue
+        if self.folderFormat == 'Single':
+            self.moveSingleFolder(self.inFolder, self.outFolder)
+        else:
+            self.moveNestedFolders()
         self.finished.emit()
 
 class WidgetGallery(QDialog):
