@@ -155,7 +155,7 @@ class WidgetGallery(QDialog):
             self.inFolderName.setText(folderName)
     
     def getOutFolder(self):
-        folderName = QFileDialog.getExistingDirectory(self,'Select Input Directory', os.getcwd(), QFileDialog.ShowDirsOnly)
+        folderName = QFileDialog.getExistingDirectory(self,'Select Output Directory', os.getcwd(), QFileDialog.ShowDirsOnly)
         if folderName == '':
             return
         self.outFolderName.setText(folderName)
