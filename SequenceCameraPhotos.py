@@ -3,6 +3,8 @@
 Created on Tue Jan 18 12:06:12 2022
 
 @author: njoosse
+@version: 1.0 - Jan 18, 2022
+@version: 1.1 - Feb 25, 2023
 """
 
 from datetime import datetime
@@ -342,7 +344,7 @@ class WidgetGallery(QDialog):
     def __init__(self, parent=None):
         super(WidgetGallery, self).__init__(parent)
         self.originalPalette = QApplication.palette()
-        self.setWindowTitle("Trail Camera Sequencer")
+        self.setWindowTitle("Trail Camera Sequencer v1.1")
         self.changeStyle('Fusion')
         width = 500
         self.folderType = 'Single'
