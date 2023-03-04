@@ -8,6 +8,7 @@ Created on Tue Jan 18 12:06:12 2022
 """
 
 from datetime import datetime
+import math
 import os
 from PIL import Image
 from PIL.ExifTags import TAGS
@@ -43,10 +44,11 @@ class Mover(QObject):
         self.useFileTime = useFileTime
         # 'Single' or 'Nested'
         self.folderFormat = folderFormat
+        self.movedFileCount = 0
         self.sequenceNumber = 1
         self.startTime = datetime(1970, 1, 1, 0, 0, 0)
         self.oldImageDate = ''
-
+        
     # calculate the output filename for the image
     def createOutputFileName(self, img, cameraName, extension):
         exifData = img.getexif()
@@ -86,28 +88,24 @@ class Mover(QObject):
         return fullOutName
 
     def moveSingleFolder(self, inFolder, outFolder):
-        fileNumber = 0
         fullFilename = ''
         filenames = os.listdir(inFolder)
         filenames.sort()
-        for filename in filenames:
-            if isImage(filename):
-                fullFilename = os.path.join(inFolder, filename)
-                img = Image.open(fullFilename)
-                outputName = self.createOutputFileName(img, os.path.basename(outFolder), os.path.splitext(filename)[1])
-                self.sequenceNumber += 1
-                if not os.path.exists(os.path.join(os.path.dirname(outputName))):
-                    # was mkdir, user could type in a folder whose parent doesn't exist yet
-                    os.makedirs(os.path.join(outFolder, filename))
+        for filename in [f for f in filenames if isImage(f)]:
+            fullFilename = os.path.join(inFolder, filename)
+            img = Image.open(fullFilename)
+            outputName = self.createOutputFileName(img, os.path.basename(outFolder), os.path.splitext(filename)[1])
+            self.sequenceNumber += 1
+            if not os.path.exists(os.path.join(os.path.dirname(outputName))):
+                # was mkdir, user could type in a folder whose parent doesn't exist yet
+                os.makedirs(os.path.join(outFolder, filename))
+            shutil.copy(fullFilename, outputName)
+            self.movedFileCount += 1
+            # send the progress back to the front-end thread
+            self.progress.emit(math.floor(float(self.movedFileCount) / self.fileCount * 100))
+            while not os.path.exists(outputName):
+                print(f'failed to copy {fullFilename} -> {outputName}')
                 shutil.copy(fullFilename, outputName)
-                fileNumber += 1
-                # send the progress back to the front-end thread
-                self.progress.emit(fileNumber / self.fileCount * 100)
-                while not os.path.exists(outputName):
-                    print(f'failed to copy {fullFilename} -> {outputName}')
-                    shutil.copy(fullFilename, outputName)
-            else:
-                continue            
 
     def moveNestedFolders(self):
         folders = os.listdir(self.inFolder)
@@ -204,7 +202,7 @@ class WidgetGallery(QDialog):
         fileCount = 0
         for dirpath, dirnames, filenames in os.walk(self.inFolderName.text()):
             for filename in filenames:
-                if os.path.splitext(filename)[1].lower()[1:] in ['jpg', 'jpeg', 'png', 'tif']:
+                if isImage(filename):
                     fileCount += 1
         return fileCount
 
@@ -318,12 +316,7 @@ class WidgetGallery(QDialog):
         grid.addWidget(QLabel('Out Folder:'), row, 0, 1, 1, Qt.AlignRight)
         grid.addWidget(self.outFolderName, row, 1, 1, 2)
         grid.addWidget(self.browseOut, row, 3, 1, 1)
-
-        # row += 1
-        # grid.addWidget(QLabel('Output File Prefix:'), row, 0, 1, 1, Qt.AlignRight)
-        # grid.addWidget(self.cameraPrefix, row, 1, 1, 1)
-        # grid.addWidget(QLabel('-Number-Timestamp-SequenceNo'), row, 2, 1, 2)
-
+        
         row += 1
         grid.addWidget(QLabel('Sequence Format:'), row, 0, 1, 1, Qt.AlignRight)
         grid.addWidget(self.useDateCheck, row, 1, 1, 1, Qt.AlignCenter)
@@ -344,7 +337,7 @@ class WidgetGallery(QDialog):
     def __init__(self, parent=None):
         super(WidgetGallery, self).__init__(parent)
         self.originalPalette = QApplication.palette()
-        self.setWindowTitle("Trail Camera Sequencer v1.1")
+        self.setWindowTitle("Trail Camera Sequencer v1.2")
         self.changeStyle('Fusion')
         width = 500
         self.folderType = 'Single'
