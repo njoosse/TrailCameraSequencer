@@ -8,6 +8,7 @@ Created on Tue Jan 18 12:06:12 2022
 """
 
 from datetime import datetime
+import logging
 import math
 import os
 from PIL import Image
@@ -17,6 +18,7 @@ from PyQt5.QtWidgets import (QApplication, QDialog, QGridLayout, QLabel, QLineEd
         QProgressBar, QPushButton, QRadioButton, QStyleFactory,
         QFileDialog, QMessageBox, QApplication, QLineEdit, QCheckBox)
 import shutil
+import time
 
 # returns True if the image can be loaded as a PIL Image
 def isImage(filename):
@@ -48,6 +50,11 @@ class Mover(QObject):
         self.sequenceNumber = 1
         self.startTime = datetime(1970, 1, 1, 0, 0, 0)
         self.oldImageDate = ''
+        logging.basicConfig(filename='TrailCameraSequencer.LOGFILE', encoding='ASCII', level=logging.DEBUG)
+        logging.getLogger("PIL.TiffImagePlugin").setLevel(logging.WARNING)
+        logging.info('='*15 + ' Starting ' + '='*15)
+        logging.info(f'Depth: {folderFormat} | Use File Date: {useFileDate} | Use File Time: {useFileTime}')
+        logging.info(f'Tasked to move {fileCount} files')
         
     # calculate the output filename for the image
     def createOutputFileName(self, img, cameraName, extension):
@@ -70,6 +77,10 @@ class Mover(QObject):
                         # if incrementing the sequence by timestamp, then the sequence number resets to 1 here
                         self.sequenceNumber = 1
                 elif imgDate != self.oldImageDate:
+                    logging.debug(f'New date is {imgDate}')
+                    logging.debug(f'Moved {self.sequenceNumber - 1} files for {self.oldImageDate}')
+                    if self.oldImageDate == '':
+                        logging.debug('    Starter date, should have 0 files')
                     self.oldImageDate = imgDate
                     self.sequenceNumber = 1
 
@@ -88,6 +99,7 @@ class Mover(QObject):
         return fullOutName
 
     def moveSingleFolder(self, inFolder, outFolder):
+        logging.info('Beginning moveSingleFolder: '+inFolder)
         fullFilename = ''
         filenames = os.listdir(inFolder)
         filenames.sort()
@@ -98,18 +110,21 @@ class Mover(QObject):
             self.sequenceNumber += 1
             if not os.path.exists(os.path.join(os.path.dirname(outputName))):
                 # was mkdir, user could type in a folder whose parent doesn't exist yet
-                os.makedirs(os.path.join(outFolder, filename))
+                os.makedirs(os.path.dirname(outputName))
             shutil.copy(fullFilename, outputName)
             self.movedFileCount += 1
             # send the progress back to the front-end thread
             self.progress.emit(math.floor(float(self.movedFileCount) / self.fileCount * 100))
             while not os.path.exists(outputName):
                 print(f'failed to copy {fullFilename} -> {outputName}')
+                logging.ERROR(f'Failed to copy {fullFilename} -> {outputName}')
                 shutil.copy(fullFilename, outputName)
 
     def moveNestedFolders(self):
+        logging.info('Beginning moveNestedFolders')
         folders = os.listdir(self.inFolder)
         folders.sort()
+        logging.info(f'Moving {len(folders)} folders')
         for folder in folders:
             outFolder = os.path.join(self.outFolder, folder)
             if not os.path.exists(outFolder):
@@ -118,12 +133,16 @@ class Mover(QObject):
 
     # function that opens and renames the images
     def moveFiles(self):
+        startTime = time.time()
         os.chdir(self.inFolder)
         if self.folderFormat == 'Single':
             self.moveSingleFolder(self.inFolder, self.outFolder)
         else:
             self.moveNestedFolders()
+        endTime = time.time()
         self.finished.emit()
+        logging.info('Sequencing completed')
+        logging.info(f'Moved {self.movedFileCount} files in {round(endTime - startTime, 2)} seconds')
 
 class WidgetGallery(QDialog):
     # warning dialog if folder contents do not match foler structure selection
