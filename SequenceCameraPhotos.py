@@ -57,45 +57,37 @@ class Mover(QObject):
         logging.info(f'Tasked to move {fileCount} files')
         
     # calculate the output filename for the image
-    def createOutputFileName(self, img, cameraName, extension):
-        exifData = img.getexif()
-        # iterate through the exif data to find the timestamp
-        for tag_id in exifData:
-            tag = TAGS.get(tag_id, tag_id)
-            data = exifData.get(tag_id)
-            # read the timestamp of the image
-            if tag == 'DateTime':
-                imgDatetime = datetime.strptime(data, '%Y:%m:%d %H:%M:%S')
-                imgDate = str(imgDatetime.date())
-                # if using the time, the sequence number has a different requirement for resetting to 1                
-                if self.useFileTime:
-                    imgTime = str(imgDatetime.time())
-                    secondsSinceLastPicture = (imgDatetime - self.startTime).total_seconds()
-                    # cameras should be taking images in rapid sucession, then have a cooldown
-                    if secondsSinceLastPicture > 60 or secondsSinceLastPicture < 0:
-                        self.startTime = imgDatetime
-                        # if incrementing the sequence by timestamp, then the sequence number resets to 1 here
-                        self.sequenceNumber = 1
-                elif imgDate != self.oldImageDate:
-                    logging.debug(f'New date is {imgDate}')
-                    logging.debug(f'Moved {self.sequenceNumber - 1} files for {self.oldImageDate}')
-                    if self.oldImageDate == '':
-                        logging.debug('    Starter date, should have 0 files')
-                    self.oldImageDate = imgDate
-                    self.sequenceNumber = 1
+    def createOutputFileName(self, imgDatetime, cameraName, extension):
+        imgDate = str(imgDatetime.date())
+        # if using the time, the sequence number has a different requirement for resetting to 1                
+        if self.useFileTime:
+            imgTime = str(imgDatetime.time())
+            secondsSinceLastPicture = (imgDatetime - self.startTime).total_seconds()
+            # cameras should be taking images in rapid sucession, then have a cooldown
+            if secondsSinceLastPicture > 60 or secondsSinceLastPicture < 0:
+                self.startTime = imgDatetime
+                # if incrementing the sequence by timestamp, then the sequence number resets to 1 here
+                self.sequenceNumber = 1
+        elif imgDate != self.oldImageDate:
+            logging.debug(f'New date is {imgDate}')
+            logging.debug(f'Moved {self.sequenceNumber - 1} files for {self.oldImageDate}')
+            if self.oldImageDate == '':
+                logging.debug('    Starter date, should have 0 files')
+            self.oldImageDate = imgDate
+            self.sequenceNumber = 1
 
-                # separate out the image date and time values, used if sequencing by time, not just by date
-                timestampStr = ''
-                if self.useFileDate:
-                    timestampStr += imgDate
-                if self.useFileTime:
-                    fileTime = imgTime.replace(':','.')[:-3]
-                    timestampStr += ' ' + fileTime
-                outputName = f'{cameraName}-{timestampStr}-{self.sequenceNumber}{extension}'
-                if self.folderFormat == 'Single':
-                    fullOutName = os.path.join(self.outFolder, outputName)
-                else:
-                    fullOutName = os.path.join(self.outFolder, cameraName, outputName)
+        # separate out the image date and time values, used if sequencing by time, not just by date
+        timestampStr = ''
+        if self.useFileDate:
+            timestampStr += imgDate
+        if self.useFileTime:
+            fileTime = imgTime.replace(':','.')[:-3]
+            timestampStr += ' ' + fileTime
+        outputName = f'{cameraName}-{timestampStr}-{self.sequenceNumber}{extension}'
+        if self.folderFormat == 'Single':
+            fullOutName = os.path.join(self.outFolder, outputName)
+        else:
+            fullOutName = os.path.join(self.outFolder, cameraName, outputName)
         return fullOutName
 
     def moveSingleFolder(self, inFolder, outFolder):
@@ -103,22 +95,44 @@ class Mover(QObject):
         fullFilename = ''
         filenames = os.listdir(inFolder)
         filenames.sort()
-        for filename in [f for f in filenames if isImage(f)]:
+        timestampDict = {}
+        filenames = os.listdir(inFolder)
+        for filename in [f for f in os.listdir(inFolder) if isImage(f)]:
             fullFilename = os.path.join(inFolder, filename)
             img = Image.open(fullFilename)
-            outputName = self.createOutputFileName(img, os.path.basename(outFolder), os.path.splitext(filename)[1])
-            self.sequenceNumber += 1
-            if not os.path.exists(os.path.join(os.path.dirname(outputName))):
-                # was mkdir, user could type in a folder whose parent doesn't exist yet
-                os.makedirs(os.path.dirname(outputName))
-            shutil.copy(fullFilename, outputName)
-            self.movedFileCount += 1
-            # send the progress back to the front-end thread
-            self.progress.emit(math.floor(float(self.movedFileCount) / self.fileCount * 100))
-            while not os.path.exists(outputName):
-                print(f'failed to copy {fullFilename} -> {outputName}')
-                logging.ERROR(f'Failed to copy {fullFilename} -> {outputName}')
-                shutil.copy(fullFilename, outputName)
+            exifData = img.getexif()
+            for tag_id in exifData:
+                tag = TAGS.get(tag_id, tag_id)
+                data = exifData.get(tag_id)
+                # read the timestamp of the image
+                if tag == 'DateTime':
+                    imgDatetime = datetime.strptime(data, '%Y:%m:%d %H:%M:%S')
+                    if imgDatetime in timestampDict:
+                        timestampDict[imgDatetime].append(fullFilename)
+                    else:
+                        timestampDict[imgDatetime] = [fullFilename]
+                    break
+        
+        timestamps = list(timestampDict.keys())
+        timestamps.sort()
+        for timestamp in timestamps:
+            timeFiles = timestampDict[timestamp]
+            timeFiles.sort()
+            for filename in timeFiles:
+                outputFilename = self.createOutputFileName(timestamp, os.path.basename(outFolder), os.path.splitext(filename)[1])
+                self.sequenceNumber += 1
+                
+                if not os.path.exists(os.path.join(os.path.dirname(outputFilename))):
+                    # was mkdir, user could type in a folder whose parent doesn't exist yet
+                    os.makedirs(os.path.dirname(outputFilename))
+                shutil.copy(filename, outputFilename)
+                self.movedFileCount += 1
+                # send the progress back to the front-end thread
+                self.progress.emit(math.floor(float(self.movedFileCount) / self.fileCount * 100))
+                while not os.path.exists(outputFilename):
+                    print(f'failed to copy {filename} -> {outputFilename}')
+                    logging.error(f'Failed to copy {filename} -> {outputFilename}')
+                    shutil.copy(filename, outputFilename)
 
     def moveNestedFolders(self):
         logging.info('Beginning moveNestedFolders')
@@ -356,7 +370,7 @@ class WidgetGallery(QDialog):
     def __init__(self, parent=None):
         super(WidgetGallery, self).__init__(parent)
         self.originalPalette = QApplication.palette()
-        self.setWindowTitle("Trail Camera Sequencer v1.2")
+        self.setWindowTitle("Trail Camera Sequencer v1.3")
         self.changeStyle('Fusion')
         width = 500
         self.folderType = 'Single'
@@ -368,4 +382,4 @@ if __name__ == '__main__':
     app = QApplication([])
     window = WidgetGallery()
     window.show()
-    app.exec_() 
+    app.exec_()
