@@ -11,7 +11,7 @@ from datetime import datetime
 import logging
 import math
 import os
-from PIL import Image
+from PIL import Image, UnidentifiedImageError
 from PIL.ExifTags import TAGS
 from PyQt5.QtCore import Qt, QThread, QObject, pyqtSignal
 from PyQt5.QtWidgets import (QApplication, QDialog, QGridLayout, QLabel, QLineEdit,
@@ -47,19 +47,21 @@ class Mover(QObject):
         # 'Single' or 'Nested'
         self.folderFormat = folderFormat
         self.movedFileCount = 0
+        self.errorFileCount = 0
         self.sequenceNumber = 1
         self.startTime = datetime(1970, 1, 1, 0, 0, 0)
         self.oldImageDate = ''
         logging.basicConfig(filename='TrailCameraSequencer.LOGFILE', encoding='ASCII', level=logging.DEBUG)
         logging.getLogger("PIL.TiffImagePlugin").setLevel(logging.WARNING)
+        logging.getLogger("PIL.Image").setLevel(logging.WARNING)
         logging.info('='*15 + ' Starting ' + '='*15)
         logging.info(f'Depth: {folderFormat} | Use File Date: {useFileDate} | Use File Time: {useFileTime}')
         logging.info(f'Tasked to move {fileCount} files')
-        
+
     # calculate the output filename for the image
     def createOutputFileName(self, imgDatetime, cameraName, extension):
         imgDate = str(imgDatetime.date())
-        # if using the time, the sequence number has a different requirement for resetting to 1                
+        # if using the time, the sequence number has a different requirement for resetting to 1
         if self.useFileTime:
             imgTime = str(imgDatetime.time())
             secondsSinceLastPicture = (imgDatetime - self.startTime).total_seconds()
@@ -99,7 +101,12 @@ class Mover(QObject):
         filenames = os.listdir(inFolder)
         for filename in [f for f in os.listdir(inFolder) if isImage(f)]:
             fullFilename = os.path.join(inFolder, filename)
-            img = Image.open(fullFilename)
+            try:
+                img = Image.open(fullFilename)
+            except UnidentifiedImageError:
+                logging.error(f'Failed to open {fullFilename}; May not be an image file or is corrupted')
+                self.errorFileCount += 1
+                continue
             exifData = img.getexif()
             for tag_id in exifData:
                 tag = TAGS.get(tag_id, tag_id)
@@ -112,7 +119,7 @@ class Mover(QObject):
                     else:
                         timestampDict[imgDatetime] = [fullFilename]
                     break
-        
+
         timestamps = list(timestampDict.keys())
         timestamps.sort()
         for timestamp in timestamps:
@@ -121,7 +128,7 @@ class Mover(QObject):
             for filename in timeFiles:
                 outputFilename = self.createOutputFileName(timestamp, os.path.basename(outFolder), os.path.splitext(filename)[1])
                 self.sequenceNumber += 1
-                
+
                 if not os.path.exists(os.path.join(os.path.dirname(outputFilename))):
                     # was mkdir, user could type in a folder whose parent doesn't exist yet
                     os.makedirs(os.path.dirname(outputFilename))
@@ -157,6 +164,8 @@ class Mover(QObject):
         self.finished.emit()
         logging.info('Sequencing completed')
         logging.info(f'Moved {self.movedFileCount} files in {round(endTime - startTime, 2)} seconds')
+        if self.errorFileCount > 0:
+            logging.warning(f'Failed to move {self.errorFileCount} files')
 
 class WidgetGallery(QDialog):
     # warning dialog if folder contents do not match foler structure selection
@@ -188,13 +197,13 @@ class WidgetGallery(QDialog):
                 self.inFolderName.setText(folderName)
         else:
             self.inFolderName.setText(folderName)
-    
+
     def getOutFolder(self):
         folderName = QFileDialog.getExistingDirectory(self,'Select Output Directory', os.getcwd(), QFileDialog.ShowDirsOnly)
         if folderName == '':
             return
         self.outFolderName.setText(folderName)
-    
+
     # verify that the input and output folders exist when starting the task
     def validateMove(self):
         errorMsg = ''
@@ -258,7 +267,7 @@ class WidgetGallery(QDialog):
         self.disableInputs()
         # define the thread that will handle the rename and move
         self.moverThread = QThread()
-        self.mover = Mover(self.getNumberOfImages(), self.inFolderName.text(), self.outFolderName.text(), 
+        self.mover = Mover(self.getNumberOfImages(), self.inFolderName.text(), self.outFolderName.text(),
                             self.useDateCheck.isChecked(), self.useTimeCheck.isChecked(), self.folderType)
         self.mover.moveToThread(self.moverThread)
         # connect functions to statuses from the mover thread
@@ -349,7 +358,7 @@ class WidgetGallery(QDialog):
         grid.addWidget(QLabel('Out Folder:'), row, 0, 1, 1, Qt.AlignRight)
         grid.addWidget(self.outFolderName, row, 1, 1, 2)
         grid.addWidget(self.browseOut, row, 3, 1, 1)
-        
+
         row += 1
         grid.addWidget(QLabel('Sequence Format:'), row, 0, 1, 1, Qt.AlignRight)
         grid.addWidget(self.useDateCheck, row, 1, 1, 1, Qt.AlignCenter)
@@ -358,7 +367,7 @@ class WidgetGallery(QDialog):
         row += 1
         grid.addWidget(self.progressBar, row, 1, 1, 2)
         grid.addWidget(self.transferButton, row, 3, 1, 1)
-        
+
         self.setLayout(grid)
 
     # I like a different style than the default one, this is how I change it
