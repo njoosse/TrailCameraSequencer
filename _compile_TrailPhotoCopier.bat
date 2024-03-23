@@ -1,1 +1,2 @@
-E:\Programming\Python\venvs\trailCameraEnv\Scripts\activate & pyinstaller E:\Programming\Python\TrailCameraSequencer\SequenceCameraPhotos.py --onefile --windowed & COPY "E:\Programming\Python\TrailCameraSequencer\dist\SequenceCameraPhotos.exe" "E:\Programming\Python\TrailCameraSequencer\TrailCamera_PhotoSequencer_v1_3.exe" /y
+set output_name=TrailCamera_PhotoSequencer_v1_3_1.exe
+E:\Programming\Python\venvs\trailCameraEnv\Scripts\activate & pyinstaller E:\Programming\Python\TrailCameraSequencer\SequenceCameraPhotos.py --onefile --windowed & COPY dist\SequenceCameraPhotos.exe %output_name% /y && rmdir /s /q dist && rmdir /s /q build && rmdir /s /q __pycache__
